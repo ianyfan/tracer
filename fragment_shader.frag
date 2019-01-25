@@ -73,8 +73,8 @@ Quad quad_create(vec3 p1, vec3 p2, vec3 p3, Material mat) {
 		normalize(edge1norm), p1 + (edge1 + edge2) / 2.0, mat);
 }
 
-bool quad_intersect(Quad quad, Ray ray,
-		inout float min_lambda, inout vec3 closest_intersection, inout Quad closest_quad) {
+bool quad_intersect(Quad quad, int quad_index, Ray ray,
+		inout float min_lambda, inout vec3 closest_intersection, inout Quad closest_quad, inout int closest_quad_index) {
 	float denom = dot(ray.dir, quad.normal);
 	if (denom > -epsilon) return false; // parallel ray or back of face
 
@@ -92,6 +92,7 @@ bool quad_intersect(Quad quad, Ray ray,
 		min_lambda = lambda;
 		closest_intersection = intersection;
 		closest_quad = quad;
+		closest_quad_index = quad_index;
 	}
 	return in_quad;
 }
@@ -134,19 +135,29 @@ vec3 ray_bounce(Quad q, vec3 incoming, vec3 intersection, Quad light, out vec3 b
 uniform uint input_seed;
 uniform float samples;
 uniform vec2 resolution;
-uniform sampler2D prev;
+uniform vec3 camera_pos;
+uniform vec3 last_camera_pos;
 
-out vec4 out_color;
+uniform sampler2D prev_direct;
+uniform sampler2D prev_indirect;
+uniform sampler2D prev_depth;
+uniform sampler2D prev_motion;
+uniform sampler2D prev_quad_id;
+
+layout(location = 0) out vec4 out_color_direct;
+layout(location = 1) out vec4 out_color_indirect;
+layout(location = 2) out vec4 out_motion;
+layout(location = 3) out vec4 out_quad_id;
 
 void main(void) {
 	// initialise rng
 	pcg16_init(uint(gl_FragCoord.x + gl_FragCoord.y * resolution.x) + input_seed);
 
 	// create scene
-	Material white_light = Material(vec3(4.0), vec3(0.0), 0.0);
-	Material green_diffuse = Material(vec3(0.0), vec3(0.0, 1.0, 0.0), 1.0);
-	Material red_diffuse =   Material(vec3(0.0), vec3(1.0, 0.0, 0.0), 1.0);
-	Material white_diffuse = Material(vec3(0.0), vec3(1.0, 1.0, 1.0), 1.0);
+	Material white_light = Material(vec3(4.0, 4.0, 3.0), vec3(0.0), 0.0);
+	Material green_diffuse = Material(vec3(0.0), vec3(0.0, 1.0, 0.0), 0.9);
+	Material red_diffuse =   Material(vec3(0.0), vec3(1.0, 0.0, 0.0), 0.9);
+	Material white_diffuse = Material(vec3(0.0), vec3(1.0, 1.0, 1.0), 0.9);
 
 	vec3 vertices[] = vec3[](
 		vec3(-1.0, 1.99, -6.0),
@@ -180,21 +191,32 @@ void main(void) {
 	vec3 gather_brdf[MAX_BOUNCES];
 	vec3 gather_intersections[MAX_BOUNCES];
 
-int ss = 1;
-vec3 c = vec3(0.0);
-for (int s = 0; s < ss; ++s) {
-	Ray ray = Ray(vec3(0.0, 0.0, 0.0), normalize(vec3(gl_FragCoord.x - resolution.x / 2.0, gl_FragCoord.y - resolution.y / 2.0, -resolution.y / 2.0))); // fov 90 TODO change
+	Ray ray = Ray(camera_pos,
+			normalize(vec3(gl_FragCoord.x - resolution.x / 2.0, gl_FragCoord.y - resolution.y / 2.0, -resolution.y / 2.0))); // fov 90 TODO change
 	int gather_bounces = 0;
 	for (; gather_bounces < MAX_BOUNCES; ++gather_bounces) {
 		Quad closest_quad;
+		int closest_quad_index;
 		vec3 intersection;
 		float min_lambda = max_depth;
 		for (int i = 0; i < scene.length(); ++i) {
 			Quad quad = scene[i];
-			quad_intersect(quad, ray, min_lambda, intersection, closest_quad);
+			quad_intersect(quad, i, ray, min_lambda, intersection, closest_quad, closest_quad_index);
 		}
 
 		if (min_lambda == max_depth) break;
+
+		if (gather_bounces == 0) {
+			// geometry buffer outputs
+			float depth = -(intersection - camera_pos).z;
+			gl_FragDepth = depth / 10.0;
+
+			vec3 last_frame_vec = intersection - last_camera_pos;
+			last_frame_vec *= (-resolution.y / 2.0) / last_frame_vec.z;
+			out_motion = vec4(last_frame_vec.x + resolution.x / 2.0 - gl_FragCoord.x, last_frame_vec.y + resolution.y / 2.0 - gl_FragCoord.y, 0.0, 1.0);
+
+			out_quad_id = vec4(float(closest_quad_index), 0.0, 0.0, 1.0);
+		}
 
 		gather_emittance[gather_bounces] = closest_quad.material.emittance;
 		vec3 outgoing_dir = ray_bounce(closest_quad, ray.dir, intersection, light, gather_brdf[gather_bounces]);
@@ -203,19 +225,21 @@ for (int s = 0; s < ss; ++s) {
 		ray.origin = ray_project(ray, epsilon);
 	}
 
-	vec3 color = vec3(0.0);
-	while (--gather_bounces >= 0) {
-		color = color * gather_brdf[gather_bounces] + gather_emittance[gather_bounces];
+	vec3 indirect_color = vec3(0.0);
+	while (--gather_bounces >= 2) {
+		indirect_color = indirect_color * gather_brdf[gather_bounces] + gather_emittance[gather_bounces];
 	}
-	c += color;
-}
-vec3 color = c / float(ss);
 
-	// gamma correct and mix
-	const float gamma = 2.2;
-	vec3 prev_color = texture(prev, gl_FragCoord.xy / resolution).rgb;
-	prev_color = pow(prev_color, vec3(gamma));
-	color = mix(prev_color, color, 1.0 / samples);
-	color = pow(color, vec3(1.0/gamma));
-	out_color = vec4(color, 1.0);
+	vec3 direct_color = vec3(0.0);
+	for (++gather_bounces; --gather_bounces >= 0;) {
+		indirect_color *= gather_brdf[gather_bounces];
+		direct_color = direct_color * gather_brdf[gather_bounces] + gather_emittance[gather_bounces];
+	}
+
+	// mix
+	direct_color = mix(texture(prev_direct, gl_FragCoord.xy / resolution).rgb, direct_color, 1.0 / samples);
+	indirect_color = mix(texture(prev_indirect, gl_FragCoord.xy / resolution).rgb, indirect_color, 1.0 / samples);
+
+	out_color_direct = vec4(direct_color, 1.0);
+	out_color_indirect = vec4(indirect_color, 1.0);
 }
