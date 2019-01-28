@@ -1,5 +1,9 @@
 'use strict';
 // (function() {
+  let cameraPos = [0.0, 0.0, 0.0];
+  let lastCameraPos = [0.0, 0.0, 0.0];
+  // TODO camera
+
   function loadShader(gl, type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
@@ -66,26 +70,17 @@
   }
 
   function setTexture(gl, program, variable, texture) {
+    gl.useProgram(program);
     const texUniform = gl.getUniformLocation(program, variable);
     gl.uniform1i(texUniform, textures.indexOf(texture));
   }
 
-  function copyTexture(gl, attachment, texture) {
-    gl.readBuffer(attachment);
-    gl.activeTexture(textureUnitOf(texture));
-    gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, gl.canvas.width, gl.canvas.height, 0);
-  }
-
-  let fsSource = null;
-  let fsDrawSource = null;
-  let vsSource = null;
-  function tryStart() {
-    if (fsSource, fsDrawSource, vsSource) {
-      start();
-    }
-  }
-
+  const shaderSources = {fsSource: null, fsCopySource: null, fsDrawSource: null, vsSource: null};
   function start() {
+    if (Object.values(shaderSources).some(x => x == null)) {
+      return;
+    }
+
     // initialise WebGL
     const canvas = document.getElementsByTagName('canvas')[0];
     const gl = canvas.getContext('webgl2', {alpha: false})
@@ -108,66 +103,73 @@
 
     // initialise program
     const shaderProgram = gl.createProgram();
+    const copyProgram = gl.createProgram();
     const drawProgram = gl.createProgram();
 
-    const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
+    const vertexShader = loadShader(gl, gl.VERTEX_SHADER, shaderSources.vsSource);
     gl.attachShader(shaderProgram, vertexShader);
+    gl.attachShader(copyProgram, vertexShader);
     gl.attachShader(drawProgram, vertexShader);
 
-    const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
+    const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, shaderSources.fsSource);
     gl.attachShader(shaderProgram, fragmentShader);
 
-    const fragmentDrawShader = loadShader(gl, gl.FRAGMENT_SHADER, fsDrawSource);
+    const fragmentCopyShader = loadShader(gl, gl.FRAGMENT_SHADER, shaderSources.fsCopySource);
+    gl.attachShader(copyProgram, fragmentCopyShader);
+
+    const fragmentDrawShader = loadShader(gl, gl.FRAGMENT_SHADER, shaderSources.fsDrawSource);
     gl.attachShader(drawProgram, fragmentDrawShader);
 
+    gl.linkProgram(copyProgram);
     gl.linkProgram(drawProgram);
-    if (!gl.getProgramParameter(drawProgram, gl.LINK_STATUS)) {
-      console.log(`Draw program error:\n${gl.getProgramInfoLog(drawProgram)}`);
-      return;
-    }
     gl.linkProgram(shaderProgram);
-    if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
-      console.log(`Shader program error:\n${gl.getProgramInfoLog(shaderProgram)}`);
-      return;
-    }
 
-    setupProgram(gl, shaderProgram);
+    setupProgram(gl, copyProgram);
     setupProgram(gl, drawProgram);
+    setupProgram(gl, shaderProgram);
 
     // textures
     const textureDepth = createDepthTexture(gl);
     const textureDirect = createColorTexture(gl);
     const textureIndirect = createColorTexture(gl);
-    const textureMotion = createColorTexture(gl); // screen-space motion
     const textureQuad = createColorTexture(gl); // quad, not mesh, id
     const textureDepthCopy = createDepthTexture(gl);
     const textureDirectCopy = createColorTexture(gl);
     const textureIndirectCopy = createColorTexture(gl);
-    const textureMotionCopy = createColorTexture(gl); // screen-space motion
     const textureQuadCopy = createColorTexture(gl); // quad, not mesh, id
 
-    gl.useProgram(drawProgram);
+    setTexture(gl, copyProgram, 'depth', textureDepth);
+    setTexture(gl, copyProgram, 'direct', textureDirect);
+    setTexture(gl, copyProgram, 'indirect', textureIndirect);
+    setTexture(gl, copyProgram, 'quad_id', textureQuad);
+
     setTexture(gl, drawProgram, 'depth', textureDepth);
     setTexture(gl, drawProgram, 'direct', textureDirect);
     setTexture(gl, drawProgram, 'indirect', textureIndirect);
-    setTexture(gl, drawProgram, 'motion', textureMotion);
     setTexture(gl, drawProgram, 'quad_id', textureQuad);
 
-    gl.useProgram(shaderProgram);
-    setTexture(gl, shaderProgram, 'prev_depth', textureDepthCopy);
-    setTexture(gl, shaderProgram, 'prev_direct', textureDirectCopy);
-    setTexture(gl, shaderProgram, 'prev_indirect', textureIndirectCopy);
-    setTexture(gl, shaderProgram, 'prev_motion', textureMotionCopy);
-    setTexture(gl, shaderProgram, 'prev_quad_id', textureQuadCopy);
+    setTexture(gl, shaderProgram, 'prev_tex_depth', textureDepthCopy);
+    setTexture(gl, shaderProgram, 'prev_tex_direct', textureDirectCopy);
+    setTexture(gl, shaderProgram, 'prev_tex_indirect', textureIndirectCopy);
+    setTexture(gl, shaderProgram, 'prev_tex_quad_id', textureQuadCopy);
 
-    // frame buffer
+    // frame buffers
+    gl.useProgram(shaderProgram);
     const frameBuffer = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuffer);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, textureDepth, 0);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, textureDirect, 0);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, textureIndirect, 0);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, textureMotion, 0);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT3, gl.TEXTURE_2D, textureQuad, 0);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2, gl.COLOR_ATTACHMENT3]);
+
+    gl.useProgram(copyProgram);
+    const frameBufferCopy = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, frameBufferCopy);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, textureDepthCopy, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, textureDirectCopy, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, textureIndirectCopy, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT3, gl.TEXTURE_2D, textureQuadCopy, 0);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2, gl.COLOR_ATTACHMENT3]);
 
     // camera
@@ -193,9 +195,9 @@
       gl.uniform1f(samplesUniform, samples);
       gl.uniform1ui(seedUniform, Math.random() * 4294967296);
 
-      let cameraPos = [0.0, 0.0, Math.sin(t) - 1];
+      cameraPos = [Math.cos(t), 0.0, Math.sin(t) - 1];
+      lastCameraPos = [Math.cos(last_t), 0.0, Math.sin(last_t) - 1];
       gl.uniform3fv(cameraUniform, cameraPos);
-      let lastCameraPos = [0.0, 0.0, Math.sin(last_t) - 1];
       gl.uniform3fv(lastCameraUniform, lastCameraPos);
 
       // render
@@ -205,15 +207,15 @@
       gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
 
       // copy textures
-      copyTexture(gl, gl.DEPTH_ATTACHMENT, textureDepthCopy);
-      copyTexture(gl, gl.COLOR_ATTACHMENT0, textureDirectCopy);
-      copyTexture(gl, gl.COLOR_ATTACHMENT1, textureIndirectCopy);
-      copyTexture(gl, gl.COLOR_ATTACHMENT2, textureMotionCopy);
-      copyTexture(gl, gl.COLOR_ATTACHMENT3, textureQuadCopy);
+      gl.useProgram(copyProgram);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, frameBufferCopy);
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+      gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
 
       // draw
       gl.useProgram(drawProgram);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.clear(gl.DEPTH_BUFFER_BIT);
       gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
 
       frame = requestAnimationFrame(draw);
@@ -229,35 +231,22 @@
     }
   }
 
+  function getShaderSource(source, dest) {
+    const req = new XMLHttpRequest();
+    req.open('GET', source, true);
+    req.responseType = 'text';
+    req.onload = function(e) {
+      if (this.status === 200) shaderSources[dest] = this.response;
+      start();
+    };
+    req.send();
+  }
+
   function init() {
-    // get fragment shader source
-    const fsReq = new XMLHttpRequest();
-    fsReq.open('GET', 'fragment_shader.frag', true);
-    fsReq.responseType = 'text';
-    fsReq.onload = function(e) {
-      if (this.status === 200) fsSource = this.response;
-      tryStart();
-    };
-    fsReq.send();
-
-    const fsDrawReq = new XMLHttpRequest();
-    fsDrawReq.open('GET', 'fragment_shader_draw.frag', true);
-    fsDrawReq.responseType = 'text';
-    fsDrawReq.onload = function(e) {
-      if (this.status === 200) fsDrawSource = this.response;
-      tryStart();
-    };
-    fsDrawReq.send();
-
-    // get vertex shader source
-    const vsReq = new XMLHttpRequest();
-    vsReq.open('GET', 'vertex_shader.vert', true);
-    vsReq.responseType = 'text';
-    vsReq.onload = function(e) {
-      if (this.status === 200) vsSource = this.response;
-      tryStart();
-    };
-    vsReq.send();
+    getShaderSource('fragment_shader.frag', 'fsSource');
+    getShaderSource('fragment_shader_copy.frag', 'fsCopySource');
+    getShaderSource('fragment_shader_draw.frag', 'fsDrawSource');
+    getShaderSource('vertex_shader.vert', 'vsSource');
   }
 
   if (document.readyState === 'loading') addEventListener('DOMContentLoaded', init);
