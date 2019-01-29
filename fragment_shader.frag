@@ -152,11 +152,16 @@ layout(location = 0) out vec4 out_color_direct;
 layout(location = 1) out vec4 out_color_indirect;
 layout(location = 3) out vec4 out_quad_id;
 
+bool is_in_view(vec2 FragCoord) {
+	return FragCoord.x >= 0.0 && FragCoord.x < resolution.x &&
+		FragCoord.y >= 0.0 && FragCoord.y < resolution.y;
+}
+
 bool find_close(inout vec2 prev_FragCoord) {
 	float prev_depth = texture(prev_tex_depth, prev_FragCoord / resolution).x;
 	float prev_quad_id = texture(prev_tex_quad_id, prev_FragCoord / resolution).x;
 
-	if (close(out_quad_id.x, prev_quad_id) && close(gl_FragDepth, prev_depth)) {
+	if (is_in_view(prev_FragCoord) && close(out_quad_id.x, prev_quad_id) && close(gl_FragDepth, prev_depth)) {
 		return true;
 	}
 	vec2 two_filter[] = vec2[](
@@ -167,7 +172,7 @@ bool find_close(inout vec2 prev_FragCoord) {
 		vec2 test_FragCoord = prev_FragCoord + two_filter[i];
 		prev_depth = texture(prev_tex_depth, test_FragCoord / resolution).x;
 		prev_quad_id = texture(prev_tex_quad_id, test_FragCoord / resolution).x;
-		if (close(out_quad_id.x, prev_quad_id) && close(gl_FragDepth, prev_depth)) {
+		if (is_in_view(test_FragCoord) && close(out_quad_id.x, prev_quad_id) && close(gl_FragDepth, prev_depth)) {
 			prev_FragCoord = test_FragCoord;
 			return true;
 		}
@@ -182,7 +187,7 @@ bool find_close(inout vec2 prev_FragCoord) {
 		vec2 test_FragCoord = prev_FragCoord + three_filter[i];
 		prev_depth = texture(prev_tex_depth, test_FragCoord / resolution).x;
 		prev_quad_id = texture(prev_tex_quad_id, test_FragCoord / resolution).x;
-		if (close(out_quad_id.x, prev_quad_id) && close(gl_FragDepth, prev_depth)) {
+		if (is_in_view(test_FragCoord) && close(out_quad_id.x, prev_quad_id) && close(gl_FragDepth, prev_depth)) {
 			prev_FragCoord = test_FragCoord;
 			return true;
 		}
