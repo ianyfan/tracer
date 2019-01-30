@@ -11,7 +11,6 @@ function init() {
     req.onload = function(e) {
       if (this.status === 200) shaderSources[source] = this.response;
       if (Object.values(shaderSources).every(x => x)) start();
-
     };
     req.send();
   });
@@ -71,6 +70,12 @@ function setTexture(program, variable, texture) {
   gl.uniform1i(texUniform, glTextures.indexOf(texture));
 }
 
+function setTextures(program, prefix, textures, index) {
+  for (const [k, v] of Object.entries(textures)) {
+    if (index in v) setTexture(program, `${prefix}_${k}`, v[index]);
+  }
+}
+
 function createFramebuffer(textures, index) {
   const framebuffer = gl.createFramebuffer();
   gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
@@ -87,6 +92,11 @@ function createFramebuffer(textures, index) {
   });
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, textures.depth[index], 0);
   gl.drawBuffers(drawBuffers);
+
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+    console.log('Failed to create framebuffer');
+  }
+
   return framebuffer;
 }
 
@@ -96,7 +106,7 @@ function loadShader(type, source) {
   gl.compileShader(shader);
 
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    console.log(`Compile error for shader:\n${gl.getShaderInfoLog(shader)}`);
+    console.log(`Failed to compile shader:\n${gl.getShaderInfoLog(shader)}`);
     return null;
   }
 
@@ -107,60 +117,41 @@ let gl;
 const shaderSources = {
   'vertex_shader.vert': null,
   'tracer.frag': null,
-  'filter.frag': null,
+  'accumulate.frag': null,
+  'variance.frag': null,
+  'wavelet.frag': null,
   'draw.frag': null,
 };
 function start() {
   // load shaders
   const vertexShader = loadShader(gl.VERTEX_SHADER, shaderSources['vertex_shader.vert']);
   const tracerShader = loadShader(gl.FRAGMENT_SHADER, shaderSources['tracer.frag']);
-  const filterShader = loadShader(gl.FRAGMENT_SHADER, shaderSources['filter.frag']);
+  const accumulateShader = loadShader(gl.FRAGMENT_SHADER, shaderSources['accumulate.frag']);
+  const varianceShader = loadShader(gl.FRAGMENT_SHADER, shaderSources['variance.frag']);
+  const waveletShader = loadShader(gl.FRAGMENT_SHADER, shaderSources['wavelet.frag']);
   const drawShader = loadShader(gl.FRAGMENT_SHADER, shaderSources['draw.frag']);
-
-  // create textures
-  // as a map of name => list of textures
-  // in order (if present): filter, prev, tracer
-  const textures = [
-    ['history', 2],
-    ['direct', 3],
-    ['indirect', 3],
-    ['mesh_id', 3],
-    ['normal', 3],
-    ['moment', 2], // second moment
-    ['motion', 1], // just tracer
-    ['depth', 3]
-  ].reduce((textures, [k, l]) => {
-    if (k === 'motion') textures.motion = [ , , createColorTexture()];
-    else textures[k] = Array.from({length: l}, createTextureAuto, k)
-    return textures;
-  }, {});
-
-  // create framebuffers
-  const filterFramebuffers = [createFramebuffer(textures, 0), createFramebuffer(textures, 1)];
-  const tracerFramebuffer = createFramebuffer(textures, 2);
 
   // initialise programs
   const tracerProgram = gl.createProgram();
-  const filterProgram = gl.createProgram();
+  const accumulateProgram = gl.createProgram();
+  const varianceProgram = gl.createProgram();
+  const waveletProgram = gl.createProgram();
   const drawProgram = gl.createProgram();
 
-  // attach shaders
-  gl.attachShader(tracerProgram, vertexShader);
+  // attach fragment shaders
   gl.attachShader(tracerProgram, tracerShader);
-
-  gl.attachShader(filterProgram, vertexShader);
-  gl.attachShader(filterProgram, filterShader);
-
-  gl.attachShader(drawProgram, vertexShader);
+  gl.attachShader(accumulateProgram, accumulateShader);
+  gl.attachShader(varianceProgram, varianceShader);
+  gl.attachShader(waveletProgram, waveletShader);
   gl.attachShader(drawProgram, drawShader);
 
-  // link programs
-  gl.linkProgram(tracerProgram);
-  gl.linkProgram(filterProgram);
-  gl.linkProgram(drawProgram);
-
   // setup programs
-  for (const program of [tracerProgram, filterProgram, drawProgram]) {
+  const programs = [tracerProgram, accumulateProgram, varianceProgram, waveletProgram, drawProgram];
+  for (const program of programs) {
+    // finish attaching shaders
+    gl.attachShader(program, vertexShader);
+    gl.linkProgram(program);
+
     gl.useProgram(program);
 
     // render scene to rectangular texture
@@ -185,51 +176,115 @@ function start() {
     gl.uniform2fv(resInvUniform, [1/gl.drawingBufferWidth, 1/gl.drawingBufferHeight]);
   }
 
-  // textures
-  for (const [k, v] of Object.entries(textures)) {
-    if (2 in v) setTexture(filterProgram, 'tracer_' + k, v[2]);
-  }
+  // create textures
+  // as a map of name => list of textures
+  // in order (if present): prev, filter1, filter2, tracer
+  const textures = [
+    ['history', 3],
+    ['direct', 4],
+    ['indirect', 4],
+    ['mesh_id', 4],
+    ['normal', 4],
+    ['moment', 3], // x = 1st dir, y = 2nd dir, z = 1st indir, w = 2nd indir
+    ['motion', 1], // just tracer
+    ['depth', 4]
+  ].reduce((textures, [k, l]) => {
+    if (k === 'motion') textures.motion = [ , , , createColorTexture()];
+    else textures[k] = Array.from({length: l}, createTextureAuto, k)
+    return textures;
+  }, {});
+
+  // create framebuffers
+  const prevFramebuffer = createFramebuffer(textures, 0); // holds the previous result
+  const filterFramebuffer1 = createFramebuffer(textures, 1); // used during filtering
+  const filterFramebuffer2 = createFramebuffer(textures, 2); // used during filtering
+  const tracerFramebuffer = createFramebuffer(textures, 3);
+
+  // set fixed textures
+  setTextures(accumulateProgram, 'prev', textures, 0);
+  setTextures(accumulateProgram, 'tracer', textures, 3);
+  setTextures(varianceProgram, 'curr', textures, 1);
+  setTexture(drawProgram, 'direct', textures.direct[2]);
+  setTexture(drawProgram, 'indirect', textures.indirect[2]);
 
   // camera
   let cameraPos = [0, 0, 0];
-  let prevCameraPos = [0, 0, 0];
   const cameraUniform = gl.getUniformLocation(tracerProgram, 'camera_pos');
-  const prevCameraUniform = gl.getUniformLocation(filterProgram, 'prev_camera_pos');
+  const prevCameraUniform = gl.getUniformLocation(tracerProgram, 'prev_camera_pos');
 
   // draw
+  const p = document.getElementsByTagName('p')[0];
+  const stepUniform = gl.getUniformLocation(waveletProgram, 'step_size');
   const randomUniform = gl.getUniformLocation(tracerProgram, 'random_seed');
   const start = performance.now();
-  let currTextureIndex = 0;
   let frame = requestAnimationFrame(draw);
+  const prevTimes = [];
   function draw() {
     frame = requestAnimationFrame(draw);
 
+    // camera
     const t = (performance.now() - start) / 1000;
-    cameraPos = [Math.cos(t), 0.0, Math.sin(t) - 1];
+    cameraPos = [Math.cos(t), 0, Math.sin(t) - 1];
+    p.textContent = `FPS: ${prevTimes.length / (t - prevTimes[0])}`;
 
+    // render
     gl.useProgram(tracerProgram);
     gl.uniform3fv(cameraUniform, cameraPos);
-    gl.uniform3fv(prevCameraUniform, prevCameraPos);
     gl.uniform1ui(randomUniform, Math.random() * 4294967296); // TODO texture?
     gl.bindFramebuffer(gl.FRAMEBUFFER, tracerFramebuffer);
     gl.clear(gl.DEPTH_BUFFER_BIT);
     gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
 
-    gl.useProgram(filterProgram);
-    for (const [k, v] of Object.entries(textures)) setTexture(filterProgram, 'prev_' + k, v[1 - currTextureIndex]);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, filterFramebuffers[currTextureIndex]);
+    gl.useProgram(accumulateProgram);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, filterFramebuffer1);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    gl.useProgram(varianceProgram);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, filterFramebuffer2);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    gl.useProgram(waveletProgram);
+    setTextures(waveletProgram, 'curr', textures, 2);
+    gl.uniform1f(stepUniform, 1);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFramebuffer);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    setTextures(waveletProgram, 'curr', textures, 0);
+    gl.uniform1f(stepUniform, 2);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, filterFramebuffer1);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    setTextures(waveletProgram, 'curr', textures, 1);
+    gl.uniform1f(stepUniform, 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, filterFramebuffer2);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    setTextures(waveletProgram, 'curr', textures, 2);
+    gl.uniform1f(stepUniform, 8);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, filterFramebuffer1);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+    setTextures(waveletProgram, 'curr', textures, 1);
+    gl.uniform1f(stepUniform, 16);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, filterFramebuffer2);
     gl.clear(gl.DEPTH_BUFFER_BIT);
     gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
 
     gl.useProgram(drawProgram);
-    setTexture(drawProgram, 'direct', textures.direct[currTextureIndex]);
-    setTexture(drawProgram, 'indirect', textures.indirect[currTextureIndex]);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
 
-    // swap buffers
-    prevCameraPos = cameraPos;
-    currTextureIndex = 1 - currTextureIndex;
+    // push history
+    gl.useProgram(tracerProgram);
+    gl.uniform3fv(prevCameraUniform, cameraPos);
+    prevTimes.push(t);
+    if (prevTimes.length > 100) prevTimes.shift();
   }
 
   document.body.onclick = function() {
