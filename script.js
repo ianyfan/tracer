@@ -6,8 +6,7 @@ else init();
 function init() {
   Object.keys(shaderSources).forEach(source => {
     const req = new XMLHttpRequest();
-    req.open('GET', source, true);
-    req.responseType = 'text';
+    req.open('GET', source);
     req.onload = function(e) {
       if (this.status === 200) shaderSources[source] = this.response;
       if (Object.values(shaderSources).every(x => x)) start();
