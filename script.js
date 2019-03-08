@@ -7,6 +7,7 @@ function init() {
   Object.keys(shaderSources).forEach(source => {
     const req = new XMLHttpRequest();
     req.open('GET', source);
+    req.responseType = 'text';
     req.onload = function(e) {
       if (this.status === 200) shaderSources[source] = this.response;
       if (Object.values(shaderSources).every(x => x)) start();
@@ -180,8 +181,8 @@ function start() {
   // in order (if present): prev, filter1, filter2, tracer
   const textures = [
     ['history', 3],
-    ['direct', 4],
-    ['indirect', 4],
+    ['direct', 4], // w = variance
+    ['indirect', 4], // w = variance
     ['mesh_id', 4],
     ['normal', 4],
     ['moment', 3], // x = 1st dir, y = 2nd dir, z = 1st indir, w = 2nd indir

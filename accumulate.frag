@@ -94,7 +94,7 @@ void main() {
 	vec2 prev_position = (gl_FragCoord + texture(tracer_motion, position)).xy * resolution_inverse;
 	float history_len = 1.0;
 	if (find_close(prev_position)) {
-		history_len = texture(prev_history, prev_position).x + 1.0;
+		history_len += texture(prev_history, prev_position).x;
 
 		vec4 prev_color_direct = texture(prev_direct, prev_position);
 		vec4 prev_color_indirect = texture(prev_indirect, prev_position);
