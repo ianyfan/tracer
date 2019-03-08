@@ -208,7 +208,8 @@ function start() {
   setTexture(drawProgram, 'indirect', textures.indirect[2]);
 
   // camera
-  let cameraPos = [0, 0, 0];
+  const cameraOrigin = [-278, 273, 800];
+  let cameraPos = cameraOrigin;
   const cameraUniform = gl.getUniformLocation(tracerProgram, 'camera_pos');
   const prevCameraUniform = gl.getUniformLocation(tracerProgram, 'prev_camera_pos');
 
@@ -224,7 +225,8 @@ function start() {
 
     // camera
     const t = (performance.now() - start) / 1000;
-    cameraPos = [Math.cos(t), 0, Math.sin(t) - 1];
+    cameraPos = cameraOrigin;
+    //cameraPos = [100*Math.sin(t) + cameraOrigin[0], 100*Math.sin(Math.sqrt(2)*t) + cameraOrigin[1], 100*Math.sin(Math.sqrt(3)*t) + cameraOrigin[2]];
     p.textContent = `FPS: ${prevTimes.length / (t - prevTimes[0])}`;
 
     // render

@@ -89,7 +89,6 @@ Quad quad_create(vec3 p1, vec3 p2, vec3 p3, Material mat) {
 Ray rand_light_ray(Quad quad, vec3 intersection) {
 	vec3 p = quad.corner + rand()*quad.edge1 + rand()*quad.edge2;
 	Ray ray = Ray(intersection, normalize(p - intersection));
-	ray.origin = ray_project(ray, epsilon);
 	return ray;
 }
 
@@ -123,39 +122,85 @@ void main(void) {
 
 	// create scene
 	Material white_light = Material(vec3(10.0), vec3(0.0), 0.0);
-	Material green_diffuse = Material(vec3(0.0), vec3(0.0, 1.0, 0.0), 0.9);
-	Material red_diffuse =   Material(vec3(0.0), vec3(1.0, 0.0, 0.0), 0.9);
-	Material white_diffuse = Material(vec3(0.0), vec3(1.0, 1.0, 1.0), 0.9);
+	Material yellow_light = Material(vec3(34.0, 20.0, 6.0), vec3(0.0), 0.0);
+	Material green_diffuse = Material(vec3(0.0), vec3(0.0, 1.0, 0.0), 0.5);
+	Material red_diffuse =   Material(vec3(0.0), vec3(1.0, 0.0, 0.0), 0.5);
+	Material white_diffuse = Material(vec3(0.0), vec3(1.0, 1.0, 1.0), 1.0);
 
 	vec3 vertices[] = vec3[](
-		vec3(-1.0, 1.99, -6.0),
-		vec3(-1.0, 1.99, -4.0),
-		vec3(1.0, 1.99, -6.0),
-		vec3(1.0, 1.99, -4.0),
-		vec3(-5.0, 2.0, -10.0),
-		vec3(-5.0, 2.0, 1.0),
-		vec3(5.0, 2.0, -10.0),
-		vec3(5.0, 2.0, 1.0),
-		vec3(-5.0, -2.0, -10.0),
-		vec3(-5.0, -2.0, 1.0),
-		vec3(5.0, -2.0, -10.0),
-		vec3(5.0, -2.0, 1.0)
+		// light
+		vec3(-343.0, 549.0, -332.0),
+		vec3(-343.0, 549.0, -227.0),
+		vec3(-213.0, 549.0, -332.0),
+		vec3(-213.0, 549.0, -227.0),
+
+		// box
+		// ceiling
+		vec3(-550.0, 550.0, -550.0),
+		vec3(-550.0, 550.0, 0.0),
+		vec3(0.0, 550.0, -550.0),
+		vec3(0.0, 550.0, 0.0),
+		// floor
+		vec3(-550.0, 0.0, -550.0),
+		vec3(-550.0, 0.0, 0.0),
+		vec3(0.0, 0.0, -550.0),
+		vec3(0.0, 0.0, 0.0),
+
+		// short block
+		// ceiling
+		vec3(-130.0, 165.0, -65.0),
+		vec3(-82.0, 165.0, -225.0),
+		vec3(-240.0, 165.0, -272.0),
+		vec3(-290.0, 165.0, -114.0),
+		// floor
+		vec3(-130.0, 0.0, -65.0),
+		vec3(-82.0, 0.0, -225.0),
+		vec3(-240.0, 0.0, -272.0),
+		vec3(-290.0, 0.0, -114.0),
+
+		// tall block
+		// ceiling
+		vec3(-423.0, 330.0, -247.0),
+		vec3(-265.0, 330.0, -296.0),
+		vec3(-314.0, 330.0, -456.0),
+		vec3(-472.0, 330.0, -406.0),
+		// floor
+		vec3(-423.0, 0.0, -247.0),
+		vec3(-265.0, 0.0, -296.0),
+		vec3(-314.0, 0.0, -456.0),
+		vec3(-472.0, 0.0, -406.0)
 	);
 
-	Quad light = quad_create(vertices[0], vertices[2], vertices[1], white_light);
+	Quad light = quad_create(vertices[0], vertices[2], vertices[1], yellow_light);
 	Quad scene[] = Quad[](light,
-		quad_create(vertices[4], vertices[6], vertices[5], white_diffuse),
-		quad_create(vertices[8], vertices[9], vertices[10], white_diffuse),
-		quad_create(vertices[4], vertices[5], vertices[8], red_diffuse),
-		quad_create(vertices[4], vertices[8], vertices[6], white_diffuse),
-		quad_create(vertices[6], vertices[10], vertices[7], green_diffuse),
-		quad_create(vertices[5], vertices[7], vertices[9], white_diffuse)
+		// box
+		quad_create(vertices[4], vertices[6], vertices[5], white_diffuse), // ceiling
+		quad_create(vertices[8], vertices[9], vertices[10], white_diffuse), // floor
+		quad_create(vertices[4], vertices[5], vertices[8], red_diffuse), // left
+		quad_create(vertices[4], vertices[8], vertices[6], white_diffuse), // back
+		quad_create(vertices[6], vertices[10], vertices[7], green_diffuse), // right
+		// quad_create(vertices[5], vertices[7], vertices[9], white_diffuse), // front
+
+		// short block
+		quad_create(vertices[12], vertices[13], vertices[15], white_diffuse), // ceiling
+		quad_create(vertices[12], vertices[15], vertices[16], white_diffuse), // front
+		quad_create(vertices[12], vertices[16], vertices[13], white_diffuse), // right
+		quad_create(vertices[13], vertices[17], vertices[14], white_diffuse), // back
+		quad_create(vertices[14], vertices[18], vertices[15], white_diffuse), // left
+
+		// tall block
+		quad_create(vertices[20], vertices[21], vertices[23], white_diffuse), // ceiling
+		quad_create(vertices[20], vertices[24], vertices[21], white_diffuse), // front
+		quad_create(vertices[21], vertices[25], vertices[22], white_diffuse), // right
+		quad_create(vertices[22], vertices[26], vertices[23], white_diffuse), // back
+		quad_create(vertices[20], vertices[23], vertices[24], white_diffuse) // left
 	);
 	Quad lights[] = Quad[](light);
 
 	// trace primary ray
+	const float focal_multiplier = 1.4; // TODO proper multiplier
 	Ray ray = Ray(camera_pos,
-			normalize(vec3(gl_FragCoord.xy - resolution / 2.0, -resolution.y / 2.0))); // fov 90 TODO change
+			normalize(vec3(gl_FragCoord.xy - resolution / 2.0, -resolution.y * focal_multiplier)));
 	vec3 intersection;
 	Quad closest_quad;
 	int closest_quad_index;
@@ -164,9 +209,7 @@ void main(void) {
 		quad_intersect(scene[i], i, ray, min_lambda, intersection, closest_quad, closest_quad_index);
 	}
 
-	if (min_lambda == max_depth) {
-		return;
-	}
+	if (min_lambda == max_depth) return;
 
 	// geometry buffer outputs
 	out_mesh_id = vec4(float(closest_quad_index), 0.0, 0.0, 1.0);
@@ -174,7 +217,7 @@ void main(void) {
 	out_normal = vec4(closest_quad.normal, 1.0);
 
 	vec3 prev_pos = intersection - prev_camera_pos;
-	prev_pos *= (-resolution.y / 2.0) / prev_pos.z;
+	prev_pos *= (-resolution.y * focal_multiplier) / prev_pos.z;
 	out_motion = vec4(prev_pos.xy + resolution / 2.0, 0.0, 0.0) - gl_FragCoord;
 
 	float depth = -(intersection - camera_pos).z;
@@ -189,7 +232,7 @@ void main(void) {
 	Quad saved_closest_quad = closest_quad;
 	vec3 saved_intersection = intersection;
 
-	ray = rand_light_ray(light, intersection);
+	ray = rand_light_ray(light, intersection + closest_quad.normal * 0.001);
 	min_lambda = max_depth;
 	for (int i = 0; i < scene.length(); ++i) {
 		quad_intersect(scene[i], i, ray, min_lambda, intersection, closest_quad, closest_quad_index);
@@ -228,15 +271,13 @@ void main(void) {
 		quad_intersect(scene[i], i, ray, min_lambda, intersection, closest_quad, closest_quad_index);
 	}
 
-	if (min_lambda == max_depth) {
-		return;
-	}
+	if (min_lambda == max_depth) return;
 
 	// calculate indirect light
 	saved_closest_quad = closest_quad;
 	saved_intersection = intersection;
 
-	ray = rand_light_ray(light, intersection);
+	ray = rand_light_ray(light, intersection + closest_quad.normal * 0.001);
 	min_lambda = max_depth;
 	for (int i = 0; i < scene.length(); ++i) {
 		quad_intersect(scene[i], i, ray, min_lambda, intersection, closest_quad, closest_quad_index);
