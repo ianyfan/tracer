@@ -6,6 +6,8 @@ uniform uint random_seed;
 uniform vec2 resolution;
 uniform vec3 camera_pos;
 uniform vec3 prev_camera_pos;
+uniform mat3 camera_rot;
+uniform mat3 prev_camera_rot; // inverse
 
 // outputs
 layout(location = 1) out vec4 out_direct;
@@ -122,10 +124,10 @@ void main(void) {
 
 	// create scene
 	Material white_light = Material(vec3(10.0), vec3(0.0), 0.0);
-	Material yellow_light = Material(vec3(34.0, 20.0, 6.0), vec3(0.0), 0.0);
-	Material green_diffuse = Material(vec3(0.0), vec3(0.0, 1.0, 0.0), 0.5);
-	Material red_diffuse =   Material(vec3(0.0), vec3(1.0, 0.0, 0.0), 0.5);
-	Material white_diffuse = Material(vec3(0.0), vec3(1.0, 1.0, 1.0), 1.0);
+	Material yellow_light = Material(vec3(35.0, 21.0, 7.0), vec3(0.0), 0.0);
+	Material green_diffuse = Material(vec3(0.0), vec3(0.1, 1.0, 0.1), 0.4);
+	Material red_diffuse =   Material(vec3(0.0), vec3(1.0, 0.1, 0.1), 0.6);
+	Material white_diffuse = Material(vec3(0.0), vec3(1.0, 1.0, 1.0), 0.7);
 
 	vec3 vertices[] = vec3[](
 		// light
@@ -199,8 +201,10 @@ void main(void) {
 
 	// trace primary ray
 	const float focal_multiplier = 1.4; // TODO proper multiplier
-	Ray ray = Ray(camera_pos,
-			normalize(vec3(gl_FragCoord.xy - resolution / 2.0, -resolution.y * focal_multiplier)));
+	vec3 camera_vec = normalize(vec3(gl_FragCoord.xy - resolution / 2.0, -resolution.y * focal_multiplier));
+	camera_vec = camera_rot * camera_vec;
+
+	Ray ray = Ray(camera_pos, camera_vec);
 	vec3 intersection;
 	Quad closest_quad;
 	int closest_quad_index;
@@ -217,6 +221,7 @@ void main(void) {
 	out_normal = vec4(closest_quad.normal, 1.0);
 
 	vec3 prev_pos = intersection - prev_camera_pos;
+	prev_pos = prev_camera_rot * prev_pos;
 	prev_pos *= (-resolution.y * focal_multiplier) / prev_pos.z;
 	out_motion = vec4(prev_pos.xy + resolution / 2.0, 0.0, 0.0) - gl_FragCoord;
 

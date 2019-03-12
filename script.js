@@ -210,8 +210,11 @@ function start() {
   // camera
   const cameraOrigin = [-278, 273, 800];
   let cameraPos = cameraOrigin;
-  const cameraUniform = gl.getUniformLocation(tracerProgram, 'camera_pos');
-  const prevCameraUniform = gl.getUniformLocation(tracerProgram, 'prev_camera_pos');
+  let cameraRot = [0, 0, 0];
+  const cameraPosUniform = gl.getUniformLocation(tracerProgram, 'camera_pos');
+  const prevCameraPosUniform = gl.getUniformLocation(tracerProgram, 'prev_camera_pos');
+  const cameraRotUniform = gl.getUniformLocation(tracerProgram, 'camera_rot');
+  const prevCameraRotUniform = gl.getUniformLocation(tracerProgram, 'prev_camera_rot');
 
   // draw
   const p = document.getElementsByTagName('p')[0];
@@ -220,18 +223,26 @@ function start() {
   const start = performance.now();
   let frame = requestAnimationFrame(draw);
   const prevTimes = [];
+  let frameNo = 0;
   function draw() {
     frame = requestAnimationFrame(draw);
+    const t = (performance.now() - start) / 1000;
+    p.textContent = `Frame: ${frameNo}; FPS: ${prevTimes.length / (t - prevTimes[0])}`;
 
     // camera
-    const t = (performance.now() - start) / 1000;
+    // cameraRot = [-Math.sin(frameNo * Math.PI/32)/8, frameNo * Math.PI/64, 0];
+    cameraRot = [0, 0, 0];
+    const cameraRotMatrix = [
+      Math.cos(cameraRot[1]), 0, -Math.sin(cameraRot[1]),
+      Math.sin(cameraRot[1])*Math.sin(cameraRot[0]), Math.cos(cameraRot[0]), Math.cos(cameraRot[1])*Math.sin(cameraRot[0]),
+      Math.sin(cameraRot[1])*Math.cos(cameraRot[0]), -Math.sin(cameraRot[0]), Math.cos(cameraRot[1])*Math.cos(cameraRot[0])];
+    // cameraPos = [cameraOrigin[0] + 1100*cameraRotMatrix[6], cameraOrigin[1] + 1100*cameraRotMatrix[7], cameraOrigin[2] + (550/2 + 800)*(cameraRotMatrix[8] - 1)];
     cameraPos = cameraOrigin;
-    //cameraPos = [100*Math.sin(t) + cameraOrigin[0], 100*Math.sin(Math.sqrt(2)*t) + cameraOrigin[1], 100*Math.sin(Math.sqrt(3)*t) + cameraOrigin[2]];
-    p.textContent = `FPS: ${prevTimes.length / (t - prevTimes[0])}`;
 
     // render
     gl.useProgram(tracerProgram);
-    gl.uniform3fv(cameraUniform, cameraPos);
+    gl.uniform3fv(cameraPosUniform, cameraPos);
+    gl.uniformMatrix3fv(cameraRotUniform, false, cameraRotMatrix);
     gl.uniform1ui(randomUniform, Math.random() * 4294967296); // TODO texture?
     gl.bindFramebuffer(gl.FRAMEBUFFER, tracerFramebuffer);
     gl.clear(gl.DEPTH_BUFFER_BIT);
@@ -284,9 +295,15 @@ function start() {
 
     // push history
     gl.useProgram(tracerProgram);
-    gl.uniform3fv(prevCameraUniform, cameraPos);
+    gl.uniform3fv(prevCameraPosUniform, cameraPos);
+    const invCameraRotMatrix = [
+      Math.cos(cameraRot[1]), Math.sin(cameraRot[0])*Math.sin(cameraRot[1]), Math.cos(cameraRot[0])*Math.sin(cameraRot[1]),
+      0, Math.cos(cameraRot[0]), -Math.sin(cameraRot[0]),
+      -Math.sin(cameraRot[1]), Math.sin(cameraRot[0])*Math.cos(cameraRot[1]), Math.cos(cameraRot[0])*Math.cos(cameraRot[1])];
+    gl.uniformMatrix3fv(prevCameraRotUniform, false, invCameraRotMatrix);
     prevTimes.push(t);
     if (prevTimes.length > 100) prevTimes.shift();
+    frameNo++;
   }
 
   document.body.onclick = function() {
