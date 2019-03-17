@@ -50,8 +50,7 @@ void pcg16_init(uint s) {
 
 struct Material {
 	vec3 emittance;
-	vec3 diffuse_color;
-	float diffuse_reflectance;
+	vec3 diffuse_reflectance;
 };
 
 struct Ray {
@@ -123,11 +122,11 @@ void main(void) {
 	pcg16_init(uint(gl_FragCoord.x + gl_FragCoord.y * resolution.x) + random_seed);
 
 	// create scene
-	Material white_light = Material(vec3(10.0), vec3(0.0), 0.0);
-	Material yellow_light = Material(vec3(35.0, 21.0, 7.0), vec3(0.0), 0.0);
-	Material green_diffuse = Material(vec3(0.0), vec3(0.1, 1.0, 0.1), 0.4);
-	Material red_diffuse =   Material(vec3(0.0), vec3(1.0, 0.1, 0.1), 0.6);
-	Material white_diffuse = Material(vec3(0.0), vec3(1.0, 1.0, 1.0), 0.7);
+	Material white_light = Material(vec3(10.0), vec3(0.0));
+	Material yellow_light = Material(vec3(350.0, 210.0, 70.0), vec3(0.0));
+	Material green_diffuse = Material(vec3(0.0), vec3(0.01, 0.2, 0.01));
+	Material red_diffuse =   Material(vec3(0.0), vec3(0.5, 0.01, 0.01));
+	Material white_diffuse = Material(vec3(0.0), vec3(0.7, 0.7, 0.7));
 
 	vec3 vertices[] = vec3[](
 		// light
@@ -205,12 +204,12 @@ void main(void) {
 	camera_vec = camera_rot * camera_vec;
 
 	Ray ray = Ray(camera_pos, camera_vec);
-	vec3 intersection;
-	Quad closest_quad;
+	vec3 primary_intersection;
+	Quad primary_quad;
 	int closest_quad_index;
 	float min_lambda = max_depth;
 	for (int i = 0; i < scene.length(); ++i) {
-		quad_intersect(scene[i], i, ray, min_lambda, intersection, closest_quad, closest_quad_index);
+		quad_intersect(scene[i], i, ray, min_lambda, primary_intersection, primary_quad, closest_quad_index);
 	}
 
 	if (min_lambda == max_depth) return;
@@ -218,43 +217,39 @@ void main(void) {
 	// geometry buffer outputs
 	out_mesh_id = vec4(float(closest_quad_index), 0.0, 0.0, 1.0);
 
-	out_normal = vec4(closest_quad.normal, 1.0);
+	out_normal = vec4(primary_quad.normal, 1.0);
 
-	vec3 prev_pos = intersection - prev_camera_pos;
+	vec3 prev_pos = primary_intersection - prev_camera_pos;
 	prev_pos = prev_camera_rot * prev_pos;
 	prev_pos *= (-resolution.y * focal_multiplier) / prev_pos.z;
 	out_motion = vec4(prev_pos.xy + resolution / 2.0, 0.0, 0.0) - gl_FragCoord;
 
-	float depth = -(intersection - camera_pos).z;
+	float depth = -(primary_intersection - camera_pos).z;
 	gl_FragDepth = depth / max_depth;
 
 	// calculate direct light
-	if (length(closest_quad.material.emittance) > 0.0) {
-		out_direct = vec4(closest_quad.material.emittance, 1.0);
+	if (length(primary_quad.material.emittance) > 0.0) {
+		out_direct = vec4(primary_quad.material.emittance, 1.0);
 		return;
 	}
 
-	Quad saved_closest_quad = closest_quad;
-	vec3 saved_intersection = intersection;
-
-	ray = rand_light_ray(light, intersection + closest_quad.normal * 0.001);
+	ray = rand_light_ray(light, primary_intersection + primary_quad.normal * epsilon * 100.0);
+	vec3 intersection;
+	Quad closest_quad;
 	min_lambda = max_depth;
 	for (int i = 0; i < scene.length(); ++i) {
 		quad_intersect(scene[i], i, ray, min_lambda, intersection, closest_quad, closest_quad_index);
 	}
 
 	if (closest_quad == light) {
-		closest_quad = saved_closest_quad;
-		vec3 light_vec = light.center - saved_intersection;
+		vec3 light_vec = light.center - primary_intersection;
 		vec3 normed_light_vec = normalize(light_vec);
 		float approx_area = abs(length(cross(light.edge1, light.edge2)) / dot(light_vec, light_vec) * dot(normed_light_vec, light.normal));
-		out_direct = vec4(approx_area
+		out_direct = vec4(approx_area / (2.0 * pi)
 				* light.material.emittance
-				* closest_quad.material.diffuse_color
-				* closest_quad.material.diffuse_reflectance
-				* dot(closest_quad.normal, normed_light_vec) / pi, 1.0);
+				* primary_quad.material.diffuse_reflectance
+				* dot(primary_quad.normal, normed_light_vec) / pi, 1.0);
 	}
-	closest_quad = saved_closest_quad;
 
 	// bounce ray
 	// cosine-weighted random vector
@@ -263,41 +258,37 @@ void main(void) {
 	float x = sin(angle) * r;
 	float y = cos(angle) * r;
 
-	vec3 outgoing_dir = x*closest_quad.tangent + y*closest_quad.cotangent + sqrt(1.0 - r*r)*closest_quad.normal;
-	ray = Ray(saved_intersection, outgoing_dir);
+	vec3 outgoing_dir = x*primary_quad.tangent + y*primary_quad.cotangent + sqrt(1.0 - r*r)*primary_quad.normal;
+	ray = Ray(primary_intersection, outgoing_dir);
 	ray.origin = ray_project(ray, epsilon);
 
-	vec3 brdf_over_prob = closest_quad.material.diffuse_color * closest_quad.material.diffuse_reflectance;
-	// vec3 brdf = closest_quad.material.diffuse_color * closest_quad.material.diffuse_reflectance * dot(outgoing_dir, closest_quad.normal) / pi;
-	// float prob = dot(outgoing_dir, closest_quad.normal) / pi;
+	vec3 brdf_over_prob = primary_quad.material.diffuse_reflectance;
+	// vec3 brdf = primary_quad.material.diffuse_reflectance * dot(outgoing_dir, primary_quad.normal) / pi;
+	// float prob = dot(outgoing_dir, primary_quad.normal) / pi;
 
+	vec3 secondary_intersection;
+	Quad secondary_quad;
 	min_lambda = max_depth;
 	for (int i = 0; i < scene.length(); ++i) {
-		quad_intersect(scene[i], i, ray, min_lambda, intersection, closest_quad, closest_quad_index);
+		quad_intersect(scene[i], i, ray, min_lambda, secondary_intersection, secondary_quad, closest_quad_index);
 	}
 
 	if (min_lambda == max_depth) return;
 
 	// calculate indirect light
-	saved_closest_quad = closest_quad;
-	saved_intersection = intersection;
-
-	ray = rand_light_ray(light, intersection + closest_quad.normal * 0.001);
+	ray = rand_light_ray(light, secondary_intersection + secondary_quad.normal * epsilon * 100.0);
 	min_lambda = max_depth;
 	for (int i = 0; i < scene.length(); ++i) {
 		quad_intersect(scene[i], i, ray, min_lambda, intersection, closest_quad, closest_quad_index);
 	}
 
 	if (closest_quad == light) {
-		closest_quad = saved_closest_quad;
-		vec3 light_vec = light.center - saved_intersection;
+		vec3 light_vec = light.center - secondary_intersection;
 		vec3 normed_light_vec = normalize(light_vec);
 		float approx_area = abs(length(cross(light.edge1, light.edge2)) / dot(light_vec, light_vec) * dot(normed_light_vec, light.normal));
-		out_indirect = vec4(approx_area
+		out_indirect = vec4(approx_area / (2.0 * pi)
 				* light.material.emittance
-				* closest_quad.material.diffuse_color
-				* closest_quad.material.diffuse_reflectance
-				* dot(closest_quad.normal, normed_light_vec) / pi * brdf_over_prob, 1.0);
+				* secondary_quad.material.diffuse_reflectance
+				* dot(secondary_quad.normal, normed_light_vec) / pi * brdf_over_prob, 1.0);
 	}
-	closest_quad = saved_closest_quad;
 }
